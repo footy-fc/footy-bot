@@ -17,14 +17,18 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Fetch ESPN Data
-async function fetchESPNData(team1, team2) {
+// Fetch ESPN Data (Dynamic League Support)
+async function fetchESPNData(team1, team2, league = "eng.1") {
   try {
-    const url = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard";
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${league}/scoreboard`;
     const response = await axios.get(url);
     const events = response.data.events;
 
-    // Find the specific match based on team names
+    if (!events || events.length === 0) {
+      return `No matches found for ${team1} vs ${team2} in ${league}. ⚽`;
+    }
+
+    // Find the specific match
     const match = events.find((event) => {
       const competitors = event.competitions[0]?.competitors;
       if (!competitors) return false;
@@ -38,24 +42,20 @@ async function fetchESPNData(team1, team2) {
       );
     });
 
-    if (!match) {
-      return `Oops! Couldn't find data for ${team1} vs ${team2}. Try another query! ⚽`;
-    }
-
-    return match;
+    return match || `No exact match found for ${team1} vs ${team2}. 🧐`;
   } catch (error) {
     console.error("Error fetching ESPN data:", error.message);
-    return "Oh no! Couldn't fetch data right now. Try again later. 🚨";
+    return "Error fetching match data. Please try again later. 🚨";
   }
 }
 
-// Process Match Data
+// Process Match Data with Extended Functionality
 async function processMatchData(match, aiIntent) {
   try {
     const { competitions, venue, status } = match;
     const competitors = competitions[0]?.competitors;
 
-    if (!competitors) return "Sorry, I couldn't find team details for this match. 🧐";
+    if (!competitors) return "Sorry, team details are missing for this match. 😕";
 
     const homeTeam = competitors.find((c) => c.homeAway === "home");
     const awayTeam = competitors.find((c) => c.homeAway === "away");
@@ -67,7 +67,7 @@ async function processMatchData(match, aiIntent) {
       case "venue":
         return venue
           ? `📍 The match is happening at **${venue.displayName}**. 🏟️`
-          : "Hmm, couldn't find the venue. 😕";
+          : "Hmm, couldn't find the venue. 🧐";
 
       case "team_stats":
         return `📈 Team Stats:\n⚪ ${homeTeam.team.displayName}: ${homeTeam.records[0]?.summary || "No stats available"}\n🔵 ${awayTeam.team.displayName}: ${awayTeam.records[0]?.summary || "No stats available"}.`;
@@ -78,8 +78,11 @@ async function processMatchData(match, aiIntent) {
           ? `💰 Betting Odds:\n⚪ ${homeTeam.team.displayName}: ${odds.homeTeamOdds?.summary || "N/A"}\n🔵 ${awayTeam.team.displayName}: ${odds.awayTeamOdds?.summary || "N/A"}\n🤝 Draw: ${odds.drawOdds?.summary || "N/A"}`
           : "No odds data available. 🙃";
 
+      case "top_scorers":
+        return "Top scorers? I’m still learning this feature. Hang tight! 🚧";
+
       default:
-        return "Hmm, I'm not sure how to answer that. Try asking about scores, venue, stats, or odds! 🤔";
+        return `Not sure how to handle that query. Try asking about scores, venue, team stats, or odds! 🤔`;
     }
   } catch (error) {
     console.error("Error processing match data:", error.message);
@@ -106,9 +109,9 @@ async function processQueryWithOpenAI(text) {
       messages: [
         {
           role: "system",
-          content: `You are a football bot. Analyze the query and extract:
-          1. User Intent (e.g., "scores", "venue", "team_stats", "odds").
-          2. Team Names involved.
+          content: `You are a football bot. Extract:
+          1. User Intent (e.g., "scores", "venue", "team_stats", "odds", "top_scorers").
+          2. Team Names (or key subjects) involved.
           Respond like:
           "User Intent: [intent]\nTeams: [team1], [team2]".`,
         },
@@ -127,7 +130,7 @@ async function processQueryWithOpenAI(text) {
 async function respondToCast(castHash, responseText) {
   try {
     const url = "https://api.neynar.com/v2/farcaster/cast";
-    const response = await axios.post(
+    await axios.post(
       url,
       {
         text: responseText,
@@ -142,7 +145,7 @@ async function respondToCast(castHash, responseText) {
         },
       }
     );
-    console.log("Response sent:", response.data);
+    console.log("Response sent successfully.");
   } catch (error) {
     console.error("Error responding to cast:", error.message);
   }
@@ -164,7 +167,7 @@ app.post("/webhook", async (req, res) => {
     const { intent, teams } = parseAIResponse(aiResponse);
 
     if (!teams || intent === "unknown") {
-      await respondToCast(hash, "Sorry, I couldn't understand your query. ⚽ Try asking about scores, venue, stats, or odds!");
+      await respondToCast(hash, "Sorry, I couldn't understand your query. Try asking about scores, venue, stats, or odds! ⚽");
       return res.sendStatus(200);
     }
 
